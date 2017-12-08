@@ -1,0 +1,7 @@
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\bin\Debug\AllAAGMDStruct.exe.config
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\bin\Debug\AllAAGMDStruct.exe
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\bin\Debug\AllAAGMDStruct.pdb
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\obj\Debug\AllAAGMDStruct.csprojResolveAssemblyReference.cache
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\obj\Debug\AllAAGMDStruct.csproj.CoreCompileInputs.cache
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\obj\Debug\AllAAGMDStruct.exe
+C:\Users\Kirito\Desktop\AllAAGMDStruct\AllAAGMDStruct\obj\Debug\AllAAGMDStruct.pdb
