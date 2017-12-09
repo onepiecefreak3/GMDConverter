@@ -259,7 +259,7 @@ namespace AllAAGMDStruct.GMD
                     //CTR structure
 
                     //Entry
-                    var LabelEntries = (Header.LabelCount > 0) ? br.ReadMultiple<LabelEntry>(Header.SectionCount) : new List<LabelEntry>();
+                    var LabelEntries = (Header.LabelCount > 0) ? br.ReadMultiple<LabelEntry>(Header.LabelCount) : new List<LabelEntry>();
 
                     //Bucketlist
                     var Buckets = (Header.LabelCount > 0) ? br.ReadMultiple<int>(0x100) : new List<int>();
