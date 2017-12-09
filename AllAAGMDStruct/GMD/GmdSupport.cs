@@ -54,7 +54,6 @@ namespace AllAAGMDStruct.GMD
     {
         public string Label;
         public string SectionText;
-        public int ID;
     }
 
     public class Support

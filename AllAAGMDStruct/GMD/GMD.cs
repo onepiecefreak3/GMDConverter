@@ -31,10 +31,10 @@ namespace AllAAGMDStruct.GMD
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public class Entry
+        public class LabelEntry
         {
-            public int ID;
-            public int LabelOffset; //relative to LabelDataOffset and after subtracting (0x29080170 + Header.SectionCount * 0x80)
+            public int SectionID;
+            public int LabelOffset; //relative to LabelDataOffset and after subtracting (0x29080170 + Header.LabelCount * 0x80)
         }
         #endregion
 
@@ -47,28 +47,12 @@ namespace AllAAGMDStruct.GMD
                 var Name = br.ReadCStringA();
                 GMDContent.Name = Name;
 
-                // Entries
-                var Entries = br.ReadMultiple<Entry>(Header.SectionCount);
+                // Label Entries
+                var LabelEntries = (Header.LabelCount > 0) ? br.ReadMultiple<LabelEntry>(Header.LabelCount) : new List<LabelEntry>();
                 var LabelDataOffset = (int)br.BaseStream.Position;
 
-                // Labels
-                var Names = new List<string>();
-                foreach (var Entry in Entries)
-                {
-                    var LabelOffset = Entry.LabelOffset - (0x29080170 + Header.SectionCount * 0x80);
-                    if (LabelOffset >= 0)
-                    {
-                        br.BaseStream.Position = LabelDataOffset + LabelOffset;
-                        Names.Add(br.ReadCStringA());
-                    }
-                    else
-                    {
-                        Names.Add(String.Empty);
-                    }
-                }
-
                 // Text
-                br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.SectionCount * 0x8) + Header.LabelSize;
+                br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.LabelCount * 0x8) + Header.LabelSize;
                 var text = br.ReadBytes(Header.SectionSize);
 
                 // Text deobfuscation
@@ -86,11 +70,20 @@ namespace AllAAGMDStruct.GMD
                         var textSize = brt.BaseStream.Position - bk;
                         brt.BaseStream.Position = bk;
 
+                        //Get Label if existent
+                        var label = "";
+                        if (LabelEntries.Find(l => l.SectionID == i) != null)
+                        {
+                            bk = br.BaseStream.Position;
+                            br.BaseStream.Position = LabelDataOffset + (LabelEntries.Find(l => l.SectionID == i).LabelOffset - (0x29080170 + Header.LabelCount * 0x80));
+                            label = br.ReadCStringA();
+                            br.BaseStream.Position = bk;
+                        }
+
                         GMDContent.Content.Add(new Content
                         {
-                            Label = Names[i] == String.Empty ? "no_name_" + counter++.ToString("000") : Names[i],
-                            SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n"),
-                            ID = i
+                            Label = label == "" ? "no_name_" + counter++.ToString("000") : label,
+                            SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n")
                         });
                     }
                 }
@@ -100,7 +93,7 @@ namespace AllAAGMDStruct.GMD
         public void Save(string filename, Platform platform, Game game)
         {
             //Get Text Section
-            var TextBlob = Encoding.UTF8.GetBytes(GMDContent.Content.Aggregate("", (output, c) => output + (c.SectionText + "\0").Replace("\r\n", "\xa").Replace("\xa", "\r\n")));
+            var TextBlob = Encoding.UTF8.GetBytes(GMDContent.Content.Aggregate("", (output, c) => output + c.SectionText.Replace("\r\n", "\xa").Replace("\xa", "\r\n") + "\0"));
 
             //XOR, if needed
             if (platform == Platform.CTR && game == Game.DD)
@@ -109,17 +102,21 @@ namespace AllAAGMDStruct.GMD
             //Get Label Blob
             var LabelBlob = Encoding.ASCII.GetBytes(GMDContent.Content.Aggregate("", (output, c) => output + (c.Label.Contains("no_name") ? "" : c.Label + "\0")));
 
-            //Create Entries
-            var Entries = new List<Entry>();
+            //Create LabelEntries
+            var Entries = new List<LabelEntry>();
             var LabelOffset = 0;
-            foreach (var c in GMDContent.Content)
+            var LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name"));
+            for (int i = 0; i < GMDContent.Content.Count(); i++)
             {
-                Entries.Add(new Entry
+                if (!GMDContent.Content[i].Label.Contains("no_name"))
                 {
-                    ID = c.ID,
-                    LabelOffset = (c.Label.Contains("no_name")) ? -1 : LabelOffset + (0x29080170 + GMDContent.Content.Count() * 0x80)
-                });
-                LabelOffset += (c.Label.Contains("no_name")) ? 0 : Encoding.ASCII.GetByteCount(c.Label) + 1;
+                    Entries.Add(new LabelEntry
+                    {
+                        SectionID = i,
+                        LabelOffset = LabelOffset + (0x29080170 + LabelCount * 0x80)
+                    });
+                    LabelOffset += Encoding.ASCII.GetByteCount(GMDContent.Content[i].Label) + 1;
+                }
             }
 
             //Header
@@ -129,7 +126,7 @@ namespace AllAAGMDStruct.GMD
                 Version = 0x00010201,
                 Language = Language.ENGLISH,
                 Zero1 = 0,
-                LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name")),
+                LabelCount = LabelCount,
                 SectionCount = GMDContent.Content.Count(),
                 LabelSize = LabelBlob.Length,
                 SectionSize = TextBlob.Length,
@@ -143,7 +140,7 @@ namespace AllAAGMDStruct.GMD
                 bw.WriteStruct(Header);
                 bw.Write(Encoding.ASCII.GetBytes(GMDContent.Name + "\0"));
 
-                //Entries
+                //LabelEntries
                 foreach (var entry in Entries)
                     bw.WriteStruct(entry);
 
@@ -168,7 +165,7 @@ namespace AllAAGMDStruct.GMD
             public Magic Magic;
             public int Version;
             public Language Language;
-            public long Zero1;
+            public long Zero1 = 0;
             public int LabelCount;
             public int SectionCount;
             public int LabelSize;
@@ -177,9 +174,9 @@ namespace AllAAGMDStruct.GMD
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public class Entry
+        public class LabelEntry
         {
-            public int ID;
+            public int SectionID;
             public uint Hash1;
             public uint Hash2;
             public int LabelOffset;
@@ -187,12 +184,12 @@ namespace AllAAGMDStruct.GMD
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public class EntryMobile
+        public class LabelEntryMobile
         {
-            public int ID;
+            public int SectionID;
             public uint Hash1;
             public uint Hash2;
-            public int ZeroPadding;
+            public int ZeroPadding = 0;
             public long LabelOffset;
             public long ListLink;
         }
@@ -208,35 +205,20 @@ namespace AllAAGMDStruct.GMD
                 GMDContent.Name = Name;
 
                 //Check for platform difference
-                var fullSize = 0x28 + Name.Length + 1 + Header.SectionCount * 0x14 + Header.LabelSize + Header.SectionSize;
+                var fullSize = 0x28 + Name.Length + 1 + Header.LabelCount * 0x14 + ((Header.LabelCount > 0) ? 0x100 * 0x4 : 0) + Header.LabelSize + Header.SectionSize;
                 if (fullSize != br.BaseStream.Length)
                 {
                     //Mobile structure
 
                     //Entry
-                    var Entries = br.ReadMultiple<EntryMobile>(Header.SectionCount);
+                    var LabelEntries = (Header.LabelCount > 0) ? br.ReadMultiple<LabelEntryMobile>(Header.LabelCount) : new List<LabelEntryMobile>();
 
                     //Bucketlist
-                    var Buckets = br.ReadMultiple<long>(0x100);
+                    var Buckets = (Header.LabelCount > 0) ? br.ReadMultiple<long>(0x100) : new List<long>();
                     var LabelDataOffset = (int)br.BaseStream.Position;
 
-                    // Labels
-                    var Names = new List<string>();
-                    foreach (var Entry in Entries)
-                    {
-                        if (Entry.LabelOffset >= 0)
-                        {
-                            br.BaseStream.Position = LabelDataOffset + Entry.LabelOffset;
-                            Names.Add(br.ReadCStringA());
-                        }
-                        else
-                        {
-                            Names.Add(String.Empty);
-                        }
-                    }
-
                     // Text
-                    br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.SectionCount * 0x20 + 0x100 * 0x8) + Header.LabelSize;
+                    br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.LabelCount * 0x20 + ((Header.LabelCount > 0) ? 0x100 * 0x8 : 0)) + Header.LabelSize;
                     var text = br.ReadBytes(Header.SectionSize);
 
                     // Text deobfuscation
@@ -254,11 +236,20 @@ namespace AllAAGMDStruct.GMD
                             var textSize = brt.BaseStream.Position - bk;
                             brt.BaseStream.Position = bk;
 
+                            //Get Label if existent
+                            var label = "";
+                            if (LabelEntries.Find(l => l.SectionID == i) != null)
+                            {
+                                bk = br.BaseStream.Position;
+                                br.BaseStream.Position = LabelDataOffset + LabelEntries.Find(l => l.SectionID == i).LabelOffset;
+                                label = br.ReadCStringA();
+                                br.BaseStream.Position = bk;
+                            }
+
                             GMDContent.Content.Add(new Content
                             {
-                                Label = Names[i] == String.Empty ? "no_name_" + counter++.ToString("000") : Names[i],
-                                SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n"),
-                                ID = i
+                                Label = label == "" ? "no_name_" + counter++.ToString("000") : label,
+                                SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n")
                             });
                         }
                     }
@@ -268,29 +259,14 @@ namespace AllAAGMDStruct.GMD
                     //CTR structure
 
                     //Entry
-                    var Entries = br.ReadMultiple<Entry>(Header.SectionCount);
+                    var LabelEntries = (Header.LabelCount > 0) ? br.ReadMultiple<LabelEntry>(Header.SectionCount) : new List<LabelEntry>();
 
                     //Bucketlist
-                    var Buckets = br.ReadMultiple<int>(0x100);
+                    var Buckets = (Header.LabelCount > 0) ? br.ReadMultiple<int>(0x100) : new List<int>();
                     var LabelDataOffset = (int)br.BaseStream.Position;
 
-                    // Labels
-                    var Names = new List<string>();
-                    foreach (var Entry in Entries)
-                    {
-                        if (Entry.LabelOffset >= 0)
-                        {
-                            br.BaseStream.Position = LabelDataOffset + Entry.LabelOffset;
-                            Names.Add(br.ReadCStringA());
-                        }
-                        else
-                        {
-                            Names.Add(String.Empty);
-                        }
-                    }
-
                     // Text
-                    br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.SectionCount * 0x14 + 0x100 * 0x4) + Header.LabelSize;
+                    br.BaseStream.Position = 0x28 + (Header.NameSize + 1) + (Header.LabelCount * 0x14 + ((Header.LabelCount > 0) ? 0x100 * 0x4 : 0)) + Header.LabelSize;
                     var text = br.ReadBytes(Header.SectionSize);
 
                     // Text deobfuscation
@@ -308,11 +284,20 @@ namespace AllAAGMDStruct.GMD
                             var textSize = brt.BaseStream.Position - bk;
                             brt.BaseStream.Position = bk;
 
+                            //Get Label if existent
+                            var label = "";
+                            if (LabelEntries.Find(l => l.SectionID == i) != null)
+                            {
+                                bk = br.BaseStream.Position;
+                                br.BaseStream.Position = LabelDataOffset + LabelEntries.Find(l => l.SectionID == i).LabelOffset;
+                                label = br.ReadCStringA();
+                                br.BaseStream.Position = bk;
+                            }
+
                             GMDContent.Content.Add(new Content
                             {
-                                Label = Names[i] == String.Empty ? "no_name_" + counter++.ToString("000") : Names[i],
-                                SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n"),
-                                ID = i
+                                Label = label == "" ? "no_name_" + counter++.ToString("000") : label,
+                                SectionText = brt.ReadString((int)textSize, Encoding.UTF8).Replace("\r\n", "\xa").Replace("\xa", "\r\n")
                             });
                         }
                     }
@@ -323,7 +308,7 @@ namespace AllAAGMDStruct.GMD
         public void Save(string filename, Platform platform, Game game)
         {
             //Get Text Blob
-            var TextBlob = Encoding.UTF8.GetBytes(GMDContent.Content.Aggregate("", (output, c) => output + (c.Label.Contains("no_name") ? "" : c.SectionText.Replace("\r\n", "\xa").Replace("\xa", "\r\n") + "\0")));
+            var TextBlob = Encoding.UTF8.GetBytes(GMDContent.Content.Aggregate("", (output, c) => output + c.SectionText.Replace("\r\n", "\xa").Replace("\xa", "\r\n") + "\0"));
 
             //ReXOR, if needed
             if (platform == Platform.CTR && game == Game.DGS2)
@@ -335,41 +320,54 @@ namespace AllAAGMDStruct.GMD
             if (platform == Platform.Mobile)
             {
                 //Create Entries
-                var Entries = new List<EntryMobile>();
+                var LabelEntries = new List<LabelEntryMobile>();
                 var Buckets = new Dictionary<byte, int>();
                 int LabelOffset = 0;
-                foreach (var c in GMDContent.Content)
+                var LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name"));
+                var counter = 0;
+                for (var i = 0; i < GMDContent.Content.Count(); i++)
                 {
-                    Entries.Add(new EntryMobile
+                    if (!GMDContent.Content[i].Label.Contains("no_name"))
                     {
-                        ID = c.ID,
-                        Hash1 = ~Crc32.Create(c.Label + c.Label),
-                        Hash2 = ~Crc32.Create(c.Label + c.Label + c.Label),
-                        ZeroPadding = 0,
-                        LabelOffset = (c.Label.Contains("no_name")) ? -1 : LabelOffset,
-                        ListLink = 0
-                    });
-                    LabelOffset += (c.Label.Contains("no_name")) ? 0 : Encoding.ASCII.GetByteCount(c.Label) + 1;
+                        LabelEntries.Add(new LabelEntryMobile
+                        {
+                            SectionID = i,
+                            Hash1 = ~Crc32.Create(GMDContent.Content[i].Label + GMDContent.Content[i].Label),
+                            Hash2 = ~Crc32.Create(GMDContent.Content[i].Label + GMDContent.Content[i].Label + GMDContent.Content[i].Label),
+                            LabelOffset = LabelOffset,
+                            ListLink = 0
+                        });
+                        LabelOffset += Encoding.ASCII.GetByteCount(GMDContent.Content[i].Label) + 1;
 
-                    var bucket = (byte)(~Crc32.Create(c.Label) & 0xff);
-                    if (Buckets.ContainsKey(bucket))
-                    {
-                        Entries[Buckets[bucket]].ListLink = c.ID;
-                        Buckets[bucket] = c.ID;
-                    }
-                    else
-                    {
-                        Buckets.Add(bucket, c.ID);
+                        var bucket = (byte)(~Crc32.Create(GMDContent.Content[i].Label) & 0xff);
+                        if (Buckets.ContainsKey(bucket))
+                        {
+                            LabelEntries[Buckets[bucket]].ListLink = counter;
+                            Buckets[bucket] = counter;
+                        }
+                        else
+                        {
+                            Buckets.Add(bucket, counter);
+                        }
+                        counter++;
                     }
                 }
 
                 //Create bucketList Blob
                 var BucketBlob = new long[0x100];
-                foreach (var c in GMDContent.Content)
+                if (LabelCount > 0)
                 {
-                    var bucket = (byte)(~Crc32.Create(c.Label) & 0xff);
-                    if (BucketBlob[bucket] == 0)
-                        BucketBlob[bucket] = (c.ID == 0) ? -1 : c.ID;
+                    var counter2 = 0;
+                    for (var i = 0; i < GMDContent.Content.Count(); i++)
+                    {
+                        if (!GMDContent.Content[i].Label.Contains("no_name"))
+                        {
+                            var bucket = (byte)(~Crc32.Create(GMDContent.Content[i].Label) & 0xff);
+                            if (BucketBlob[bucket] == 0)
+                                BucketBlob[bucket] = (counter2 == 0) ? -1 : counter2;
+                            counter2++;
+                        }
+                    }
                 }
 
                 //Create Header
@@ -378,8 +376,7 @@ namespace AllAAGMDStruct.GMD
                     Magic = "GMD\0",
                     Version = 0x00010302,
                     Language = Language.ENGLISH,
-                    Zero1 = 0,
-                    LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name")),
+                    LabelCount = LabelCount,
                     SectionCount = GMDContent.Content.Count(),
                     LabelSize = LabelBlob.Length,
                     SectionSize = TextBlob.Length,
@@ -394,12 +391,13 @@ namespace AllAAGMDStruct.GMD
                     bw.Write(Encoding.ASCII.GetBytes(GMDContent.Name + "\0"));
 
                     //Entries
-                    foreach (var entry in Entries)
+                    foreach (var entry in LabelEntries)
                         bw.WriteStruct(entry);
 
                     //BucketList
-                    foreach (var bucket in BucketBlob)
-                        bw.Write(bucket);
+                    if (LabelCount > 0)
+                        foreach (var bucket in BucketBlob)
+                            bw.Write(bucket);
 
                     //Labels
                     bw.Write(LabelBlob);
@@ -411,40 +409,54 @@ namespace AllAAGMDStruct.GMD
             else if (platform == Platform.CTR)
             {
                 //Create Entries
-                var Entries = new List<Entry>();
+                var LabelEntries = new List<LabelEntry>();
                 var Buckets = new Dictionary<byte, int>();
                 int LabelOffset = 0;
-                foreach (var c in GMDContent.Content)
+                var LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name"));
+                var counter = 0;
+                for (var i = 0; i < GMDContent.Content.Count(); i++)
                 {
-                    Entries.Add(new Entry
+                    if (!GMDContent.Content[i].Label.Contains("no_name"))
                     {
-                        ID = c.ID,
-                        Hash1 = ~Crc32.Create(c.Label + c.Label),
-                        Hash2 = ~Crc32.Create(c.Label + c.Label + c.Label),
-                        LabelOffset = (c.Label.Contains("no_name")) ? -1 : LabelOffset,
-                        ListLink = 0
-                    });
-                    LabelOffset += (c.Label.Contains("no_name")) ? 0 : Encoding.ASCII.GetByteCount(c.Label) + 1;
+                        LabelEntries.Add(new LabelEntry
+                        {
+                            SectionID = i,
+                            Hash1 = ~Crc32.Create(GMDContent.Content[i].Label + GMDContent.Content[i].Label),
+                            Hash2 = ~Crc32.Create(GMDContent.Content[i].Label + GMDContent.Content[i].Label + GMDContent.Content[i].Label),
+                            LabelOffset = LabelOffset,
+                            ListLink = 0
+                        });
+                        LabelOffset += Encoding.ASCII.GetByteCount(GMDContent.Content[i].Label) + 1;
 
-                    var bucket = (byte)(~Crc32.Create(c.Label) & 0xff);
-                    if (Buckets.ContainsKey(bucket))
-                    {
-                        Entries[Buckets[bucket]].ListLink = c.ID;
-                        Buckets[bucket] = c.ID;
-                    }
-                    else
-                    {
-                        Buckets.Add(bucket, c.ID);
+                        var bucket = (byte)(~Crc32.Create(GMDContent.Content[i].Label) & 0xff);
+                        if (Buckets.ContainsKey(bucket))
+                        {
+                            LabelEntries[Buckets[bucket]].ListLink = counter;
+                            Buckets[bucket] = counter;
+                        }
+                        else
+                        {
+                            Buckets.Add(bucket, counter);
+                        }
+                        counter++;
                     }
                 }
 
                 //Create bucketList Blob
                 var BucketBlob = new int[0x100];
-                foreach (var c in GMDContent.Content)
+                if (LabelCount > 0)
                 {
-                    var bucket = (byte)(~Crc32.Create(c.Label) & 0xff);
-                    if (BucketBlob[bucket] == 0)
-                        BucketBlob[bucket] = (c.ID == 0) ? -1 : c.ID;
+                    var counter2 = 0;
+                    for (var i = 0; i < GMDContent.Content.Count(); i++)
+                    {
+                        if (!GMDContent.Content[i].Label.Contains("no_name"))
+                        {
+                            var bucket = (byte)(~Crc32.Create(GMDContent.Content[i].Label) & 0xff);
+                            if (BucketBlob[bucket] == 0)
+                                BucketBlob[bucket] = (counter2 == 0) ? -1 : counter2;
+                            counter2++;
+                        }
+                    }
                 }
 
                 //Create Header
@@ -453,8 +465,7 @@ namespace AllAAGMDStruct.GMD
                     Magic = "GMD\0",
                     Version = 0x00010302,
                     Language = Language.ENGLISH,
-                    Zero1 = 0,
-                    LabelCount = GMDContent.Content.Count(c => !c.Label.Contains("no_name")),
+                    LabelCount = LabelCount,
                     SectionCount = GMDContent.Content.Count(),
                     LabelSize = LabelBlob.Length,
                     SectionSize = TextBlob.Length,
@@ -469,12 +480,13 @@ namespace AllAAGMDStruct.GMD
                     bw.Write(Encoding.ASCII.GetBytes(GMDContent.Name + "\0"));
 
                     //Entries
-                    foreach (var entry in Entries)
+                    foreach (var entry in LabelEntries)
                         bw.WriteStruct(entry);
 
                     //BucketList
-                    foreach (var bucket in BucketBlob)
-                        bw.Write(bucket);
+                    if (LabelCount > 0)
+                        foreach (var bucket in BucketBlob)
+                            bw.Write(bucket);
 
                     //Labels
                     bw.Write(LabelBlob);
