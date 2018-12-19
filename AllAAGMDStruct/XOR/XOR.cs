@@ -18,8 +18,10 @@ namespace AllAAGMDStruct
         public static Stream DeXOR(byte[] input)
         {
             var lastByte = input[input.Length - 1];
+            //if lastByte is 0, check if the key bytes produce 0 at that point by xor'ing
             if (lastByte == 0)
-                return new MemoryStream(input);
+                if (!key1.Zip(key2, (k1, k2) => k1.Zip(k2, (x, y) => x == y).ToArray()[input.Length % k1.Length - 1]).Any(x => x))
+                    return new MemoryStream(input);
 
             var t = input.Select((b, i) => (byte)(b ^ key1[1][i % key1[1].Length] ^ key2[1][i % key2[1].Length])).ToArray();
 
